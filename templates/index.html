@@ -1,0 +1,61 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Proctoring Telemetry Dashboard | Day28</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+    <header class="topbar">
+        <div>
+            <h1>Proctoring Telemetry</h1>
+            <p>Centralized Multi-Modal Monitoring System</p>
+        </div>
+        <div class="connection">
+            <span id="connection-dot" class="status-dot"></span>
+            <span id="connection-text">Connecting...</span>
+        </div>
+    </header>
+
+    <main class="container">
+        <section class="summary-grid">
+            <article class="summary-card">
+                <span>Total Events</span>
+                <strong id="total-events">0</strong>
+            </article>
+            <article class="summary-card">
+                <span>Warnings</span>
+                <strong id="warning-events">0</strong>
+            </article>
+            <article class="summary-card">
+                <span>Critical Alerts</span>
+                <strong id="critical-events">0</strong>
+            </article>
+            <article class="summary-card">
+                <span>Normal Events</span>
+                <strong id="normal-events">0</strong>
+            </article>
+        </section>
+
+        <section class="section-heading">
+            <div>
+                <h2>Live Telemetry Events</h2>
+                <p>Events received from Firebase Firestore</p>
+            </div>
+            <span id="last-updated">Waiting for events...</span>
+        </section>
+
+        <section id="event-container" class="event-grid">
+            <div class="empty-state">Waiting for telemetry events...</div>
+        </section>
+    </main>
+
+    <footer>
+        Day28 – Frontend Telemetry Display | Firebase Firestore
+    </footer>
+
+    <script src="{{ url_for('static', filename='js/app.js') }}"></script>
+</body>
+</html>

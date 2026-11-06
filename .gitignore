@@ -1,0 +1,37 @@
+
+# Python virtual environments
+.venv/
+venv/
+
+# Python cache
+__pycache__/
+*.py[cod]
+
+# Environment variables and secrets
+.env
+.env.*
+!.env.example
+serviceAccountKey.json
+*serviceAccount*.json
+
+# IDE files
+.vscode/
+.idea/
+
+# Logs
+*.log
+logs/
+
+# Test cache
+.pytest_cache/
+
+# Documentation - company restricted
+*.docx
+
+# Local screenshots and images
+*.png
+*.jpg
+*.jpeg
+*.webp
+# Compiled Python files
+*.py[cod]
