@@ -1,8 +1,26 @@
 
-const API_EVENTS = "/api/events";
-const API_STATUS = "/api/status";
+import { initializeApp } from "https://www.gstatic.com/firebasejs/11.10.0/firebase-app.js";
+import {
+    getAuth,
+    signInAnonymously
+} from "https://www.gstatic.com/firebasejs/11.10.0/firebase-auth.js";
+import {
+    getFirestore,
+    collection,
+    onSnapshot
+} from "https://www.gstatic.com/firebasejs/11.10.0/firebase-firestore.js";
 
-const POLL_INTERVAL = 1000;
+// Firebase Web App configuration
+const firebaseConfig = {
+    apiKey: "AIzaSyAMx2nBy1AyRS5B0ooGE9cVluwSdP8uD5E",
+    authDomain: "day27-proctor-telemetry.firebaseapp.com",
+    projectId: "day27-proctor-telemetry",
+    storageBucket: "day27-proctor-telemetry.firebasestorage.app",
+    messagingSenderId: "336101590740",
+    appId: "1:336101590740:web:0cdf5bb8ac80c09adc1d41"
+};
+
+const COLLECTION_NAME = "proctor_tracking";
 const MAX_TRACKED_EVENTS = 5000;
 
 const seenDocumentIds = new Set();
@@ -18,7 +36,7 @@ const elements = {
     lastUpdated: document.getElementById("last-updated")
 };
 
-let refreshInProgress = false;
+let unsubscribeFromEvents = null;
 
 function escapeHTML(value) {
     return String(value ?? "N/A").replace(/[&<>"']/g, character => ({
@@ -52,15 +70,34 @@ function getAlertTypes(event) {
 function formatTimestamp(timestamp) {
     if (!timestamp) return "N/A";
 
-    if (typeof timestamp === "object" && timestamp.seconds) {
-        timestamp = timestamp.seconds * 1000;
-    }
+    let date;
 
-    const date = new Date(timestamp);
+    if (typeof timestamp.toDate === "function") {
+        date = timestamp.toDate();
+    } else if (typeof timestamp === "object" && timestamp.seconds) {
+        date = new Date(timestamp.seconds * 1000);
+    } else {
+        date = new Date(timestamp);
+    }
 
     return Number.isNaN(date.getTime())
         ? String(timestamp)
         : date.toLocaleString();
+}
+
+function getTimestampValue(timestamp) {
+    if (!timestamp) return 0;
+
+    if (typeof timestamp.toMillis === "function") {
+        return timestamp.toMillis();
+    }
+
+    if (typeof timestamp === "object" && timestamp.seconds) {
+        return timestamp.seconds * 1000;
+    }
+
+    const value = new Date(timestamp).getTime();
+    return Number.isNaN(value) ? 0 : value;
 }
 
 function updateSummary(events) {
@@ -151,7 +188,6 @@ function detectNewEvents(events) {
         newCount++;
     });
 
-    // Keep memory usage bounded.
     while (seenDocumentIds.size > MAX_TRACKED_EVENTS) {
         const oldestId = seenDocumentIds.values().next().value;
         seenDocumentIds.delete(oldestId);
@@ -177,105 +213,112 @@ function renderEvents(events) {
     return performance.now() - renderStart;
 }
 
-async function checkConnection() {
-    try {
-        const response = await fetch(API_STATUS, {
-            cache: "no-store"
-        });
+function updateConnectionStatus(connected, message) {
+    elements.connectionDot.className = connected
+        ? "status-dot connected"
+        : "status-dot disconnected";
 
-        if (!response.ok) {
-            throw new Error("Status request failed");
-        }
-
-        const data = await response.json();
-
-        if (!data.success) {
-            throw new Error("Firebase unavailable");
-        }
-
-        elements.connectionDot.className = "status-dot connected";
-        elements.connectionText.textContent = "Firebase Connected";
-
-    } catch (error) {
-        elements.connectionDot.className = "status-dot disconnected";
-        elements.connectionText.textContent = "Connection Error";
-
-        console.error("Firebase connection error:", error);
-    }
+    elements.connectionText.textContent = message;
 }
 
-async function loadEvents() {
-    const cycleStart = performance.now();
+function startFirestoreListener(db) {
+    const listenerStart = performance.now();
+    const telemetryCollection = collection(db, COLLECTION_NAME);
 
+    unsubscribeFromEvents = onSnapshot(
+        telemetryCollection,
+        snapshot => {
+            const callbackStart = performance.now();
+
+            const events = snapshot.docs.map(documentSnapshot => ({
+                ...documentSnapshot.data(),
+                document_id: documentSnapshot.id
+            }));
+
+            events.sort((a, b) =>
+                getTimestampValue(b.timestamp) -
+                getTimestampValue(a.timestamp)
+            );
+
+            const newEventCount = detectNewEvents(events);
+            const renderTime = renderEvents(events);
+            const totalClientTime = performance.now() - callbackStart;
+
+            updateConnectionStatus(true, "Firebase Connected");
+
+            elements.lastUpdated.textContent =
+                `Last updated: ${new Date().toLocaleTimeString()} | ` +
+                `Render: ${renderTime.toFixed(2)} ms | ` +
+                `Client processing: ${totalClientTime.toFixed(2)} ms | ` +
+                `New events: ${newEventCount}`;
+
+            console.info("Day28 Firestore Performance", {
+                totalEvents: events.length,
+                newEventsDetected: newEventCount,
+                snapshotToRenderMs: Number(totalClientTime.toFixed(2)),
+                domRenderTimeMs: Number(renderTime.toFixed(2)),
+                initialListenerSetupMs: Number(
+                    (performance.now() - listenerStart).toFixed(2)
+                )
+            });
+        },
+        error => {
+            console.error("Firestore listener error:", error);
+
+            updateConnectionStatus(false, "Firestore Read Error");
+
+            elements.container.innerHTML =
+                '<div class="empty-state">Unable to read telemetry. Check Firestore permissions.</div>';
+
+            elements.lastUpdated.textContent =
+                `Firestore error: ${escapeHTML(error.code || error.message)}`;
+        }
+    );
+}
+
+async function initializeDashboard() {
     try {
-        const apiStart = performance.now();
+        updateConnectionStatus(false, "Connecting to Firebase...");
 
-        const response = await fetch(API_EVENTS, {
-            cache: "no-store"
-        });
-
-        if (!response.ok) {
-            throw new Error("Event request failed");
+        if (
+            !firebaseConfig.apiKey ||
+            firebaseConfig.apiKey === "REPLACE_WITH_YOUR_ACTUAL_API_KEY"
+        ) {
+            throw new Error("Add the actual Firebase Web App API key.");
         }
 
-        const data = await response.json();
+        const app = initializeApp(firebaseConfig);
+        const auth = getAuth(app);
+        const db = getFirestore(app);
 
-        const apiResponseTime = performance.now() - apiStart;
+        const credentials = await signInAnonymously(auth);
 
-        if (!data.success) {
-            throw new Error("Unable to load events");
-        }
+        console.info(
+            "Day28 Anonymous Firebase UID:",
+            credentials.user.uid
+        );
 
-        const events = data.events || [];
+        updateConnectionStatus(
+            false,
+            "Authenticated - checking Firestore access..."
+        );
 
-        const newEventCount = detectNewEvents(events);
-
-        const renderTime = renderEvents(events);
-
-        const totalClientTime = performance.now() - cycleStart;
-
-        const meetsClientTarget = totalClientTime <= 1500;
-
-        elements.lastUpdated.textContent =
-            `Last updated: ${new Date().toLocaleTimeString()} | ` +
-            `API: ${apiResponseTime.toFixed(2)} ms | ` +
-            `Render: ${renderTime.toFixed(2)} ms | ` +
-            `Client cycle: ${totalClientTime.toFixed(2)} ms | ` +
-            `New events: ${newEventCount}`;
-
-        console.info("Day28 Frontend Performance", {
-            totalEvents: events.length,
-            newEventsDetected: newEventCount,
-            apiResponseTimeMs: Number(apiResponseTime.toFixed(2)),
-            domRenderTimeMs: Number(renderTime.toFixed(2)),
-            totalClientCycleMs: Number(totalClientTime.toFixed(2)),
-            clientCycleWithin1500Ms: meetsClientTarget
-        });
+        startFirestoreListener(db);
 
     } catch (error) {
+        console.error("Day28 initialization error:", error);
+
+        updateConnectionStatus(false, "Firebase Initialization Error");
+
         elements.container.innerHTML =
-            '<div class="empty-state">Unable to load telemetry events. Retrying...</div>';
-
-        console.error("Telemetry loading error:", error);
+            `<div class="empty-state">${escapeHTML(error.message)}</div>`;
     }
 }
 
-async function refreshDashboard() {
-    if (refreshInProgress) {
-        return;
+window.addEventListener("beforeunload", () => {
+    if (unsubscribeFromEvents) {
+        unsubscribeFromEvents();
     }
+});
 
-    refreshInProgress = true;
-
-    try {
-        await Promise.all([
-            checkConnection(),
-            loadEvents()
-        ]);
-    } finally {
-        refreshInProgress = false;
-    }
-}
-
-refreshDashboard();
-setInterval(refreshDashboard, POLL_INTERVAL);
+initializeDashboard();
